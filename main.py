@@ -39,9 +39,10 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     # Now that we have a valid conversation_id, connect the WebSocket
 
     await manager.connect(websocket, conversation_id)
-    phi_agent = agent.run_agent()
+
     try:
         while True:
+            phi_agent = agent.run_agent()
             data = await websocket.receive_text()
             response_data = json.loads(data)
             if response_data.get("type") == "bot_response":
@@ -85,7 +86,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
             # Reset agent
             # phi_agent.memory.reset()
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, KeyboardInterrupt):
         manager.disconnect(conversation_id)
         print(f"Client {conversation_id} disconnected.")
 
