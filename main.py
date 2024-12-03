@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import json
-import random
+from agent import agent
+from agent.PhiAgent import ResponseStreamEvent, ToolCallEvent, ToolStreamEvent
 
 app = FastAPI()
 
@@ -36,10 +37,12 @@ manager = ConnectionManager()
 @app.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     # Now that we have a valid conversation_id, connect the WebSocket
+
     await manager.connect(websocket, conversation_id)
 
     try:
         while True:
+            phi_agent = agent.run_agent()
             data = await websocket.receive_text()
             response_data = json.loads(data)
             if response_data.get("type") == "bot_response":
@@ -49,28 +52,39 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
                     f"Received bot response for conversation {conversation_id}: {content}"
                 )
             print(f"Received message from client {conversation_id}: {data}")
-
+            full_response = ""
             # Simulate a thought update and bot response
+            async for ev in agent.stream_chat_gen(phi_agent, content):
+                # Agent thought
+                if isinstance(ev, ToolCallEvent):
+                    content_list = [
+                        {
+                            "tool_name": tool_call.tool_name,
+                            "tool_kwargs": tool_call.tool_kwargs,
+                        }
+                        for tool_call in ev.tool_calls
+                    ]
+                    thought_update = {
+                        "type": "thought_update",
+                        "role": "assistant",
+                        "content": str(content_list),
+                        "conversationId": conversation_id,
+                    }
+                    await websocket.send_text(json.dumps(thought_update))
 
-            thought_update = {
-                "type": "thought_update",
-                "role": "assistant",
-                "thought": f"This is a thought update for: {content}",
-                "conversationId": conversation_id,
-            }
+                elif isinstance(ev, ResponseStreamEvent):
+                    content = ev.text
+                    full_response += content
 
             bot_response = {
                 "type": "bot_response",
                 "role": "assistant",
-                "content": f"This is a response to: {content}",
+                "content": full_response,
                 "conversationId": conversation_id,  # Include the client ID in the response
             }
-
-            # Send thought update and bot response to the client
-            for i in range(2):
-                await websocket.send_text(json.dumps(thought_update))
             await websocket.send_text(json.dumps(bot_response))
-            # await manager.broadcast(json.dumps(bot_response), conversation_id)
+            # Reset agent
+            phi_agent.memory.reset()
 
     except WebSocketDisconnect:
         manager.disconnect(conversation_id)
