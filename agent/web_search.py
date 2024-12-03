@@ -1,14 +1,48 @@
-from llama_index.core.tools import FunctionTool
 from bs4 import BeautifulSoup
-from typing import Dict, List, Union
-from loguru import logger
-import asyncio
-import aiohttp
+from time import sleep
+from typing import List
 import requests
+from typing import Union
+from .get_llm import get_llm_azure
 from llama_index.program.openai import OpenAIPydanticProgram
 from .schema import SearchTranslatedQueries
-from .get_llm import get_llm_azure
-from .ai_config_schema import PROMPT
+from .ai_config_schema import PROMPT, QUESTION_GEN_TEMPLATE
+from llama_index.core.question_gen import LLMQuestionGenerator
+from llama_index.core import QueryBundle
+from llama_index.core.tools import ToolMetadata
+from llama_index.core.tools import FunctionTool
+import datetime
+
+
+def get_page_content(input: str) -> str:
+    html = requests.get(input).text
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.get_text(strip=True, separator="\n")
+
+
+def get_search_results(input: str, freshness: Union[str, None] = None) -> List:
+    """
+    Fetches search results from Brave's search API based on the input query and freshness parameter.
+    """
+    headers = {
+        "Accept": "application/json",
+        "X-Subscription-Token": "BSA2RsJ9dtiGZPslnwzU2CClAn9FvWb",
+    }
+    response = requests.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        params={
+            "q": input,
+            "count": 3,  # 2 generated queries ==> 4 in total, 3 --> 6 in totial. etc
+            "country": "ALL",  # Max number of results to return
+            "freshness": freshness,
+        },
+        headers=headers,
+        timeout=10,
+    )
+    if not response.ok:
+        raise Exception(f"HTTP error {response.status_code}")
+    sleep(1)  # avoid Brave rate limit
+    return response.json()
 
 
 def generate_queries_search_engine(query_str: str) -> list:
@@ -26,44 +60,72 @@ def generate_queries_search_engine(query_str: str) -> list:
     return output.Output
 
 
-async def process_search_results(input: str):
-    """
-    Processes a list of search queries to collect URLs, their frequencies, descriptions, and ages from search results.
+def decompose_queries_search_engine(query_str: str) -> list:
+    llm = get_llm_azure()
+    question_gen = LLMQuestionGenerator.from_defaults(
+        llm=llm, prompt_template_str=QUESTION_GEN_TEMPLATE
+    )
 
-    Note:
-    - This function must be invoked **only once** per query. It fetches search results,
-    Parameters:
-    input (str): The query to process.
+    tool_choices = [
+        ToolMetadata(
+            name="web_search_tool",
+            description=(
+                f"Used to retrieve information about up-to-date information, website or the information out of LLM's knowledge, arg input is 'query'"
+            ),
+        ),
+        ToolMetadata(
+            name="web_fetch_tool",
+            description=(f"Used to fetch information of specific url"),
+        ),
+    ]
+
+    choices = question_gen.generate(tool_choices, QueryBundle(query_str=query_str))
+    sub_questions = [choice.sub_question for choice in choices]
+
+    return sub_questions
+
+
+def process_search_results(input: str):
+    """
+    Processes search results based on the input query string.
+
+    This function decomposes the input query into sub-questions, retrieves search results for each sub-question,
+    and compiles a list of URLs along with their frequency of occurrence, age, and description.
+
+    Args:
+        input (str): The input query string to be processed.
 
     Returns:
-    List[str]: A list of string with containing urls from brave search engine.
+        list: A sorted list of dictionaries containing URLs, each with its frequency of occurrence.
     """
-    logger.info("Before generate")
-    logger.info("Use Web")
-    queries = [await generate_queries_search_engine(input)]
-    logger.info(f"English question: {queries}")
-    print("Queries:", queries)
-    logger.info("After generate")
+    # queries = generate_queries_search_engine(input)
+    # queries = decompose_queries_search_engine(input)
+    queries = [input]
+    print("sub question:", queries)
+    # queries = [input]
     url_frequency = {}
     url_age = {}
     url_description = {}
-    logger.info("Before get_search_results")
     for query in queries:
-        search_results = await async_get_search_results(query)
+        search_results = get_search_results(query)
+
+        # Debugging: Print the search_results to understand its structure
+        # print(f"Search results for query '{query}': {search_results}")
 
         if isinstance(search_results, dict):
             results_list = search_results.get("web", {}).get("results", [])
 
             if isinstance(results_list, list):
+                # Collect URLs, their frequencies, and ages
                 for result in results_list:
                     url = result.get("url")
-                    age = result.get("age")
+                    age = result.get("age")  # Get the date posted in the internet
                     description = result.get("description")
                     if url:
                         url_frequency[url] = url_frequency.get(url, 0) + 1
-                        url_age[url] = age
+                        url_age[url] = age  # Store the age for the URL
                         url_description[url] = description
-
+    # Create a list of dictionaries with URL, frequency, and age
     url_list = [
         {
             "url": url,
@@ -71,164 +133,27 @@ async def process_search_results(input: str):
             "age": url_age[url],
             "frequency": url_frequency[url],
         }
-        for url in url_frequency
+        for url, freq in url_frequency.items()
     ]
 
+    # Sort the list by frequency (high to low)
     sorted_url_list = sorted(url_list, key=lambda item: item["frequency"], reverse=True)
-    return [url_list[key] for key in ["url"] for url_list in sorted_url_list]
+    return [{key: url_list[key] for key in ["url"]} for url_list in sorted_url_list]
 
 
-async def get_search_results(input: str, freshness: Union[str, None] = None) -> List:
-    """
-    Fetches search results from Brave's search API based on the input query and freshness parameter.
+web_search_tool = FunctionTool.from_defaults(
+    fn=process_search_results,
+    name="web_search_tool",
+    description=(
+        f"Used to retrieve information about up-to-date information in {str(datetime.datetime.now().date())}, \
+            website or the information out of LLM's knowledge."
+    ),
+)
 
-    Note: This function must only be called **only once** per session to avoid exceeding rate limits.
-
-    Parameters:
-    input (str): The search query.
-    freshness (Union[str, None]): Optional freshness parameter for filtering results.
-
-    Returns:
-    List: JSON response containing search results.
-    """
-
-    headers = {
-        "Accept": "application/json",
-        "X-Subscription-Token": "BSA2RsJ9dtiGZPslnwzU2CClAn9FvWb",  # Insert valid API token
-    }
-    response = requests.get(
-        "https://api.search.brave.com/res/v1/web/search",
-        params={
-            "q": input,
-            "count": 3,
-            "country": "ALL",
-            "freshness": freshness,
-        },
-        headers=headers,
-        timeout=10,
-    )
-    if not response.ok:
-        raise Exception(f"HTTP error {response.status_code}")
-    # sleep(1)  # To avoid Brave's rate limit
-    return response.json()
-
-
-async def async_get_search_results(
-    input: str, freshness: Union[str, None] = None
-) -> List:
-    """
-    Fetches search results from Brave's search API based on the input query and freshness parameter.
-
-    Note: This function must only be called **only once** per question to avoid exceeding rate limits.
-
-    Parameters:
-    input (str): The search query.
-    freshness (Optional[str]): Optional freshness parameter for filtering results.
-
-    Returns:
-    List: JSON response containing search results.
-
-    Raises:
-    HTTPStatusError: If the API request fails
-    """
-    headers = {
-        "Accept": "application/json",
-        "X-Subscription-Token": "BSA2RsJ9dtiGZPslnwzU2CClAn9FvWb",  # Insert valid API token
-    }
-    params: Dict[str, str] = {}
-
-    if input:
-        params["q"] = str(input)
-    params["count"] = "3"
-    params["country"] = "ALL"
-
-    if freshness:
-        params["freshness"] = str(freshness)
-
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params=params,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise aiohttp.ClientResponseError(
-                        response.request_info,
-                        response.history,
-                        status=response.status,
-                        message=f"HTTP error {response.status}: {error_text}",
-                    )
-
-                await asyncio.sleep(0.5)
-
-                return await response.json()
-
-        except aiohttp.ClientError as e:
-            raise
-        except Exception as e:
-            print(f"Unexpected error occurred: {e}")
-            raise
-
-
-def get_page_content(input: str) -> str:
-    """
-    Fetches and extracts the main content from a webpage.
-
-    Note: This function must be used **only once** per URL to minimize redundant requests.
-
-    Parameters:
-    input (str): The URL to fetch.
-
-    Returns:
-    str: Extracted text content of the webpage.
-    """
-    html = requests.get(input).text
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text(strip=True, separator="\n")
-
-
-async def fetch(session, url, timeout=8):
-    async with session.get(url, timeout=timeout) as response:
-        return await response.text()
-
-
-def parse(html):
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text(strip=True, separator="\n")
-
-
-async def fetch_and_parse(session, url):
-    logger.info(f"Fetch url: {url}")
-    try:
-        html = await fetch(session, url)
-        paras = parse(html)
-        return paras
-    except Exception as e:
-        return f"Can not fetch the {url}"
-
-
-async def async_get_page_content(url):
-    """
-    Fetches and extracts the main content from a webpage asynchronously.
-
-    Note: This function must be used **only once** if you found enough information.
-
-    Parameters:
-    url (str): The URL to fetch.
-
-    Returns:
-    str: Extracted text content of the webpage.
-    """
-    async with aiohttp.ClientSession() as session:
-        return await fetch_and_parse(session, url)
-
-
-# Configure tools
-web_search_tool = FunctionTool.from_defaults(async_fn=process_search_results)
-
-web_fetch_tool = FunctionTool.from_defaults(async_fn=async_get_page_content)
+web_fetch_tool = FunctionTool.from_defaults(
+    fn=get_page_content,
+    name="web_fetch_tool",
+    description="Used to fetch information of specific url",
+)
 
 web_tools = [web_fetch_tool, web_search_tool]
