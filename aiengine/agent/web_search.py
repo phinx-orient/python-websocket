@@ -12,7 +12,7 @@ from llama_index.core import QueryBundle
 from llama_index.core.tools import ToolMetadata
 from llama_index.core.tools import FunctionTool
 import datetime
-
+from asyncer import asyncify
 
 def get_page_content(input: str) -> str:
     html = requests.get(input).text
