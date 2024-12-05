@@ -1,0 +1,60 @@
+version: '3.7'
+
+services:
+  gateway:
+    image: neurondgpt-api-gateway:latest
+    command: sh -c "python main.py"
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    env_file:
+        - ./gateway/.env
+    volumes:
+      - ./gateway:/app
+    ports:
+      - 8001:8000
+    depends_on:
+      aiservice:
+        condition: service_healthy
+  
+  servicebus:
+    container_name: neurondgpt-servicebus
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-admin}
+    ports:
+      - 5672:5672
+      - 15672:15672
+    restart: unless-stopped
+    depends_on:
+      authdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      retries: 5
+      timeout: 5s
+
+  aiservice:
+    image: neurondgpt-aiservice:latest
+    command: sh -c "python main.py"
+    # command: sh -c "python create_db.py && python main.py"
+    build:
+      context: ./aiengine
+      dockerfile: Dockerfile
+    env_file:
+        - ./aiengine/.env
+    volumes:
+      - ./aiengine:/app
+    ports:
+      - 8001:8001
+    depends_on:
+      authdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
