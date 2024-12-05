@@ -21,3 +21,4 @@ __pycache__/
 # End Generation Here
 
 .env
+__pycache__
