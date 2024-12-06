@@ -37,7 +37,6 @@ manager = ConnectionManager()
 @app.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     # Now that we have a valid conversation_id, connect the WebSocket
-
     await manager.connect(websocket, conversation_id)
     # Start the RabbitMQ consumer in the background using asyncio.Future
     future = asyncio.ensure_future(rabbitmq_main_consumer(websocket))

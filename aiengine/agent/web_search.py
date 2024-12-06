@@ -15,9 +15,12 @@ import datetime
 from asyncer import asyncify
 
 def get_page_content(input: str) -> str:
-    html = requests.get(input).text
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text(strip=True, separator="\n")
+    try:
+        html = requests.get(input, timeout=5).text
+        soup = BeautifulSoup(html, "html.parser")
+        return soup.get_text(strip=True, separator="\n")
+    except requests.exceptions.Timeout:
+        return "cannot fetch the page"
 
 
 def get_search_results(input: str, freshness: Union[str, None] = None) -> List:
@@ -32,7 +35,7 @@ def get_search_results(input: str, freshness: Union[str, None] = None) -> List:
         "https://api.search.brave.com/res/v1/web/search",
         params={
             "q": input,
-            "count": 3,  # 2 generated queries ==> 4 in total, 3 --> 6 in totial. etc
+            "count": 2,  # 2 generated queries ==> 4 in total, 3 --> 6 in totial. etc
             "country": "ALL",  # Max number of results to return
             "freshness": freshness,
         },
