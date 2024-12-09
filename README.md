@@ -9,7 +9,27 @@ This guide provides detailed instructions on how to set up and run the gateway a
 - RabbitMQ server running locally.
 
 ## Directory Structure
-
+```bash
+/gateway
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── main.py
+    ├── rabbitmq_client.py
+    └── consumer.py
+/aiengine
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── main.py
+    ├── rabbitmq_client.py
+    ├── publisher.py
+    ├── agent/
+    │   ├── agent.py
+    │   ├── PhiAgent.py
+    │   ├── ai_config_schema.py
+    │   ├── get_llm.py
+    │   ├── web_search.py
+    │   └── system_prompt.py
+```
 ## Setup Instructions
 1. **Install Dependencies**  
    Navigate to both the gateway and aiengine directories and install the required packages using pip.  
