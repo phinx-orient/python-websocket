@@ -74,18 +74,20 @@ This guide provides detailed instructions on how to set up and run the gateway a
 - `main.py`: Handles WebSocket connections and manages communication between clients and the RabbitMQ message broker.
   - WebSocket endpoint: `@app.websocket("/ws/{conversation_id}")`
   - Connection management: `ConnectionManager` class.
+- `publisher.py`: Publishes messages to the RabbitMQ queue.
 
 ### AI Engine Component
 - `main.py`: Manages the AI agent's responses and interactions.
   - Streaming endpoint: `@app.post("/streaming")`
   - Uses the agent to process input and generate responses.
+- `consumer.py`: Consume agent tools from queue.
 
 ### RabbitMQ Client
 - `rabbitmq_client.py`: Manages interactions with the RabbitMQ message broker.
   - Methods for connecting, sending, and consuming messages.
 
 ### Publisher
-- `publisher.py`: Publishes messages to the RabbitMQ queue.
+
 
 ### Agent
 - `agent.py`: Contains the logic for running the AI agent.
